@@ -20,7 +20,10 @@ from collections import deque
 try:
     from model import OpenTrackVLA as PlannerModel, ModelConfig as PlannerConfig
     from cache_gridpool import VisionFeatureCacher, VisionCacheConfig, grid_pool_tokens
-except Exception:
+except Exception as e:
+    import traceback
+    print(f"ERROR importing model/cache_gridpool: {e}")
+    traceback.print_exc()
     PlannerModel = None  # type: ignore
     PlannerConfig = None  # type: ignore
     VisionFeatureCacher = None  # type: ignore
@@ -267,13 +270,18 @@ class GTBBoxAgent(AgentConfig):
 
     def _ensure_vision_cache(self):
         if VisionFeatureCacher is None or VisionCacheConfig is None:
+            print(f"DEBUG _ensure_vision_cache: VisionFeatureCacher is None: {VisionFeatureCacher is None}, VisionCacheConfig is None: {VisionCacheConfig is None}")
             return None
         if self._vision_cache is None:
             try:
                 cfg = VisionCacheConfig(image_size=384, batch_size=1, device=('cuda' if torch.cuda.is_available() else 'cpu'))
                 self._vision_cache = VisionFeatureCacher(cfg)
                 self._vision_cache.eval()
-            except Exception:
+                print("DEBUG _ensure_vision_cache: VisionFeatureCacher initialized successfully")
+            except Exception as e:
+                import traceback
+                print(f"DEBUG _ensure_vision_cache exception: {e}")
+                traceback.print_exc()
                 self._vision_cache = None
         return self._vision_cache
 
@@ -373,9 +381,11 @@ class GTBBoxAgent(AgentConfig):
     def _encode_frame_tokens(self, rgb_np: np.ndarray):
         """Encode an RGB frame (H,W,3, uint8-like) into (Vcoarse(4,C), Vfine(64,C))."""
         if grid_pool_tokens is None:
+            print("DEBUG _encode_frame_tokens: grid_pool_tokens is None")
             return None, None
         enc = self._ensure_vision_cache()
         if enc is None:
+            print("DEBUG _encode_frame_tokens: vision cache is None")
             return None, None
         try:
             from PIL import Image
@@ -386,20 +396,26 @@ class GTBBoxAgent(AgentConfig):
             Vfine = grid_pool_tokens(Vt_cat, Hp, Wp, out_tokens=64)[0].float()   # (64, C)
             Vcoarse = grid_pool_tokens(Vt_cat, Hp, Wp, out_tokens=4)[0].float()  # (4, C)
             return Vcoarse, Vfine
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"DEBUG _encode_frame_tokens exception: {e}")
+            traceback.print_exc()
             return None, None
 
     def _planner_action(self, rgb_frame_np: np.ndarray, instruction: Optional[str]) -> Optional[List[float]]:
         """Use NavFoM planner to predict waypoints and convert to [vx, vy, wz]."""
         if self.planner_model is None and PlannerModel is None:
+            print("DEBUG: planner_model is None and PlannerModel is None")
             return None
         # Encode current frame tokens
         Vc, Vf = self._encode_frame_tokens(rgb_frame_np)
         if Vc is None or Vf is None:
+            print(f"DEBUG: Vc is None: {Vc is None}, Vf is None: {Vf is None}")
             self._last_predicted_traj = None
             return None
         # Require planner model to be initialized once
         if self.planner_model is None:
+            print("DEBUG: planner_model is None after encoding")
             self._last_predicted_traj = None
             return None
         try:
@@ -446,7 +462,10 @@ class GTBBoxAgent(AgentConfig):
             print (f"Planner action: {vx}, {vy}, {wz}")
             return [float(vx), float(vy), float(wz)]
             
-        except Exception:
+        except Exception as e:
+            import traceback
+            print(f"DEBUG: Exception in _planner_action: {e}")
+            traceback.print_exc()
             self._last_predicted_traj = None
             return None
 

@@ -15,6 +15,16 @@ from transformers import AutoImageProcessor, AutoModel
 from transformers import SiglipVisionModel, SiglipImageProcessor
 from PIL import Image
 
+# ModelScope support - try to import, fallback gracefully
+try:
+    from modelscope import AutoModel as MSAutoModel
+    from modelscope import AutoImageProcessor as MSAutoImageProcessor
+    MODELSCOPE_AVAILABLE = True
+except ImportError:
+    MODELSCOPE_AVAILABLE = False
+    MSAutoModel = None
+    MSAutoImageProcessor = None
+
 def ensure_dir(p: str) -> None:
     os.makedirs(p, exist_ok=True)
 
@@ -216,8 +226,14 @@ class VisionCacheConfig:
     device: str = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: torch.dtype = torch.float16  # for storage; compute still in fp32
     force_square_resize: bool = True    # ensure exact 384x384
-    
+    use_modelscope: bool = None  # Will be set from env or default to True
+
     def __post_init__(self):
+        # Check environment variable for ModelScope usage (default: True)
+        if self.use_modelscope is None:
+            env_ms = os.getenv("USE_MODELSCOPE", "1").strip().lower()
+            self.use_modelscope = env_ms in ("1", "true", "yes")
+
         # Check environment variable for local DINOv3 model path
         if self.dino_model_name is None:
             env_path = os.getenv("DINOV3_MODEL_PATH", "").strip()
@@ -232,17 +248,47 @@ class VisionFeatureCacher(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.device = torch.device(cfg.device)
-        # DINOv3
-        self.dino_proc = AutoImageProcessor.from_pretrained(cfg.dino_model_name)
-        self.dino = AutoModel.from_pretrained(cfg.dino_model_name)
+
+        # DINOv3 - use ModelScope if enabled and available
+        if cfg.use_modelscope and MODELSCOPE_AVAILABLE:
+            print(f"[VisionFeatureCacher] Loading DINOv3 from ModelScope: {cfg.dino_model_name}")
+            self.dino_proc = MSAutoImageProcessor.from_pretrained(cfg.dino_model_name)
+            self.dino = MSAutoModel.from_pretrained(cfg.dino_model_name)
+        else:
+            if cfg.use_modelscope and not MODELSCOPE_AVAILABLE:
+                print("[VisionFeatureCacher] Warning: ModelScope not available, falling back to HuggingFace")
+            print(f"[VisionFeatureCacher] Loading DINOv3 from HuggingFace: {cfg.dino_model_name}")
+            self.dino_proc = AutoImageProcessor.from_pretrained(cfg.dino_model_name)
+            self.dino = AutoModel.from_pretrained(cfg.dino_model_name)
+
         self.dino.eval().to(self.device)
         self.dino_patch = getattr(self.dino.config, 'patch_size', None)
         # Default to 0 registers when field is missing
         self.dino_regs = int(getattr(self.dino.config, 'num_register_tokens', 0) or 0)
         self.dino_hidden = getattr(self.dino.config, 'hidden_size', 384)
-        # SigLIP (vision)
-        self.siglip_proc = SiglipImageProcessor.from_pretrained(cfg.siglip_model_name)
-        self.siglip = SiglipVisionModel.from_pretrained(cfg.siglip_model_name)
+
+        # SigLIP (vision only) - ModelScope loads full model, so we need to extract vision part
+        if cfg.use_modelscope and MODELSCOPE_AVAILABLE:
+            print(f"[VisionFeatureCacher] Loading SigLIP from ModelScope: {cfg.siglip_model_name}")
+            try:
+                self.siglip_proc = MSAutoImageProcessor.from_pretrained(cfg.siglip_model_name)
+                # Load full model and extract vision_model
+                full_siglip = MSAutoModel.from_pretrained(cfg.siglip_model_name)
+                if hasattr(full_siglip, 'vision_model'):
+                    self.siglip = full_siglip.vision_model
+                    print("[VisionFeatureCacher] Extracted vision_model from full SigLIP model")
+                else:
+                    # If it's already a vision model, use it directly
+                    self.siglip = full_siglip
+            except Exception as e:
+                print(f"[VisionFeatureCacher] ModelScope SigLIP failed ({e}), falling back to HuggingFace")
+                self.siglip_proc = SiglipImageProcessor.from_pretrained(cfg.siglip_model_name)
+                self.siglip = SiglipVisionModel.from_pretrained(cfg.siglip_model_name)
+        else:
+            print(f"[VisionFeatureCacher] Loading SigLIP from HuggingFace: {cfg.siglip_model_name}")
+            self.siglip_proc = SiglipImageProcessor.from_pretrained(cfg.siglip_model_name)
+            self.siglip = SiglipVisionModel.from_pretrained(cfg.siglip_model_name)
+
         self.siglip.eval().to(self.device)
         self.siglip_hidden = getattr(self.siglip.config, 'hidden_size', 1152)
 

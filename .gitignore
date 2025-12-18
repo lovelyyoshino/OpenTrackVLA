@@ -19,3 +19,7 @@ ckpt*/
 
 *.npy
 *.npz
+
+habitat-sim/
+pretrained_model/
+sim_data/eval/
