@@ -93,9 +93,98 @@ Keeping this layout in sync with TrackVLA’s published instructions avoids surp
 
 ---
 
-## 3. Data Processing Pipeline
+## 3. Simulation Data Generation (New!)
 
-### 3.1 Build Dataset (`make_tracking_data.py`)
+The original release only provided sample data under `sim_data/sample`. This section describes how to **batch-generate training data** from HM3D/MP3D scenes using an Oracle policy — completing the full closed-loop pipeline.
+
+### 3.1 Overview: The Missing Piece
+
+The training pipeline requires simulation data in the following format:
+```
+sim_data/
+  seed_xxx/
+    <scene_id>/
+      <episode_id>.mp4          # RGB video from robot's perspective
+      <episode_id>_info.json    # Per-step state (base_velocity, dis_to_human, facing)
+      <episode_id>.json         # Episode statistics (success, collision, etc.)
+```
+
+Previously, there was no script to generate this data at scale. Now you can use `collect_sim_data.py` to collect expert demonstrations using an Oracle follower policy.
+
+### 3.2 Collect Simulation Data (`collect_sim_data.py`)
+
+This script runs Habitat simulation with an **Oracle policy** (path-planning based expert) to control the robot, generating training data automatically.
+
+**Basic Usage:**
+```bash
+python collect_sim_data.py \
+    --exp-config habitat-lab/habitat/config/benchmark/nav/track/track_train_stt.yaml \
+    --save-path sim_data/train \
+    --num-episodes 1000 \
+    --seed 42
+```
+
+**Parallel Collection (Recommended for large-scale):**
+```bash
+# Use the all-in-one script for parallel collection
+bash generate_train_data.sh --num-episodes 5000 --num-parallel 4 --seed 100
+```
+
+**Key Arguments:**
+| Argument | Description | Default |
+|----------|-------------|---------|
+| `--exp-config` | Habitat config file (STT/DT/AT) | `track_train_stt.yaml` |
+| `--save-path` | Output directory for sim data | `sim_data/train` |
+| `--num-episodes` | Number of episodes to collect | All available |
+| `--seed` | Random seed for reproducibility | 42 |
+| `--split-id/--split-num` | For parallel collection | 0/1 |
+
+### 3.3 Full Pipeline Script (`generate_train_data.sh`)
+
+For convenience, we provide an all-in-one script that handles the complete data generation workflow:
+
+```bash
+# Complete pipeline: collect → process → cache
+bash generate_train_data.sh --num-episodes 5000 --num-parallel 8
+
+# Or run individual stages:
+bash generate_train_data.sh --mode collect   # Step 1: Collect sim data
+bash generate_train_data.sh --mode process   # Step 2: Convert to training format
+bash generate_train_data.sh --mode cache     # Step 3: Pre-cache vision features
+```
+
+**Pipeline Stages:**
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 1: collect_sim_data.py                                │
+│   Input:  HM3D/MP3D scenes + Humanoid avatars               │
+│   Output: sim_data/train/seed_*/scene_id/*.mp4 + *_info.json│
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 2: make_tracking_data.py                              │
+│   Input:  sim_data/train/                                   │
+│   Output: data/generated/frames/ + jsonl/                   │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 3: precache_frames.py                                 │
+│   Input:  data/generated/frames/                            │
+│   Output: data/generated/vision_cache/*.pt                  │
+└─────────────────────────────────────────────────────────────┘
+                            ↓
+┌─────────────────────────────────────────────────────────────┐
+│ Stage 4: train.py                                           │
+│   python train.py --train_json data/generated/jsonl \       │
+│       --cache_root data/generated/vision_cache              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## 4. Data Processing Pipeline
+
+### 4.1 Build Dataset from Sim Data (`make_tracking_data.py`)
 This script integrates egocentric base velocities to emit future indicator curves, waypoints, and sliding-window JSONL shards. Each episode requires the `<stem>.mp4` RGB capture alongside `<stem>_info.json` pose metadata.
 
 **Quick Start (Sample Data)**
@@ -138,7 +227,7 @@ Tokens are stored as `.half()` tensors to save disk, and any missing coarse toke
 
 ---
 
-## 4. Training
+## 5. Training
 
 `train.py` hosts the Qwen-based planner with masked waypoint losses. Point it at the dataset JSONL directory and the cached vision tokens to kick off optimization.
 
@@ -163,11 +252,11 @@ python train.py \
 
 ---
 
-## 5. Evaluation
+## 6. Evaluation
 
 `eval.sh` fans Habitat-based rollouts across configurable chunks and expects `CKPT`, `HF_MODEL_ID`, or `HF_MODEL_DIR` to define which weights to load. Outputs land under `sim_data/eval/<task>` alongside per-episode videos and metrics. Use `bash kill_eval.sh` to cleanly terminate all spawned jobs.
 
-### 5.1 Using the Pre-trained 0.6B Model
+### 6.1 Using the Pre-trained 0.6B Model
 - **Option A — Auto-download**
   ```bash
   HF_MODEL_ID=omlab/opentrackvla-qwen06b bash eval.sh
@@ -178,7 +267,7 @@ python train.py \
   HF_MODEL_DIR=$(pwd)/open_trackvla_hf bash eval.sh
   ```
 
-### 5.2 Evaluating Custom Checkpoints
+### 6.2 Evaluating Custom Checkpoints
 
 Point `CKPT` at any artifact produced by `train.py`:
 
