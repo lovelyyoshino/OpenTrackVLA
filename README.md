@@ -211,4 +211,18 @@ Tune `CHUNKS`, `NUM_PARALLEL`, or the Habitat config inside `eval.sh` to rebalan
 - TrackVLA: Embodied Visual Tracking in the Wild [arXiv:2505.23189](https://arxiv.org/abs/2505.23189)
 - Embodied Navigation Foundation Model [arXiv:2509.12129](https://arxiv.org/abs/2509.12129)
 
+## Citation
+
+If you find OpenTrackVLA useful in your research or applications, please cite it using the following BibTeX:
+
+```bibtex
+@misc{opentrackvla2025,
+  author       = {Kyusong Lee and Tiancheng Zhao},
+  title        = {OpenTrackVLA: Open-Source Visual Language Action Model for Visual Navigation and Following},
+  year         = {2025},
+  publisher    = {GitHub},
+  journal      = {GitHub Repository},
+  howpublished = {\url{[https://github.com/yourusername/OpenTrackVLA](https://github.com/yourusername/OpenTrackVLA)}}
+}
+
 **Happy tracking!** Contributions and issue reports are welcome via pull requests.
