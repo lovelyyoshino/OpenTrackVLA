@@ -287,8 +287,10 @@ class GTBBoxAgent(AgentConfig):
 
     def _is_hf_dir(self, path: str) -> bool:
         cfg = os.path.join(path, 'config.json')
-        weights = os.path.join(path, 'pytorch_model.bin')
-        return os.path.isdir(path) and os.path.isfile(cfg) and os.path.isfile(weights)
+        weights_bin = os.path.join(path, 'pytorch_model.bin')
+        weights_safetensors = os.path.join(path, 'model.safetensors')
+        has_weights = os.path.isfile(weights_bin) or os.path.isfile(weights_safetensors)
+        return os.path.isdir(path) and os.path.isfile(cfg) and has_weights
 
     def _resolve_planner_ckpt_once(self):
         if self._planner_ckpt_path is not None or self._hf_model_dir is not None:

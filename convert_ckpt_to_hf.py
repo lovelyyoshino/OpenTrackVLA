@@ -90,6 +90,11 @@ def convert_checkpoint(
     print(f"[convert] Saving HuggingFace checkpoint under {out_dir}")
     hf_model.save_pretrained(str(out_dir))
 
+    # Also save pytorch_model.bin for compatibility with trained_agent.py
+    bin_path = out_dir / "pytorch_model.bin"
+    print(f"[convert] Saving pytorch_model.bin for compatibility")
+    torch.save(hf_model.state_dict(), str(bin_path))
+
     meta = {
         "source_checkpoint": str(ckpt_path),
         "converted_with": os.path.basename(__file__),
