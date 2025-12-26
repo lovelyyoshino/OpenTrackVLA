@@ -39,7 +39,7 @@ CONFIG="habitat-lab/habitat/config/benchmark/nav/track/track_train_stt.yaml"
 NUM_EPISODES=1000
 NUM_PARALLEL=4
 SEED=100
-OUTPUT_DIR="data/generated"
+OUTPUT_DIR="data/sample"
 SIM_DATA_DIR="sim_data/generated"
 
 # 解析命令行参数

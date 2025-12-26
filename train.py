@@ -688,6 +688,9 @@ class TrainConfig:
     # trajectory saving
     save_trajectories: bool = False
     traj_subdir: str = 'trajectories'
+    # visualization saving
+    vis_every: int = 100          # save vis every N steps (0 = disabled)
+    vis_samples: int = 4          # number of samples to visualize per batch
     # evaluation
     val_json: Optional[str] = None
     eval_every: int = 0
@@ -1073,8 +1076,8 @@ def train(cfg: TrainConfig):
                     except Exception:
                         pass
 
-                # Visualize GT vs Pred on current images 
-                if rank == 0 and step % 100 == 0:
+                # Visualize GT vs Pred on current images
+                if rank == 0 and cfg.vis_every > 0 and step % cfg.vis_every == 0:
                     try:
                         vis_dir = os.path.join(cfg.out_dir, 'vis')
                         os.makedirs(vis_dir, exist_ok=True)
@@ -1085,7 +1088,7 @@ def train(cfg: TrainConfig):
                             gt_np = gwp.detach().float().cpu().numpy()
                             cur_paths = batch.get('current_path', [])
                         Bcur = pred_np.shape[0]
-                        for bi in range(min(Bcur, 4)):
+                        for bi in range(min(Bcur, cfg.vis_samples)):
                             cur_path = cur_paths[bi] if isinstance(cur_paths, list) and bi < len(cur_paths) else None
                             if cur_path is None or (not os.path.exists(cur_path)):
                                 continue
@@ -1485,6 +1488,8 @@ def parse_args() -> TrainConfig:
     ap.add_argument('--csv_logging', action='store_true')
     ap.add_argument('--save_trajectories', action='store_true')
     ap.add_argument('--traj_subdir', type=str, default='trajectories')
+    ap.add_argument('--vis_every', type=int, default=500, help='Save visualization every N steps (0 = disabled)')
+    ap.add_argument('--vis_samples', type=int, default=2, help='Number of samples to visualize per batch')
     # evaluation
     ap.add_argument('--eval_every', type=int, default=0, help='Evaluate every N steps (0 = disabled)')
     ap.add_argument('--eval_batches', type=int, default=8, help='Number of validation batches per eval')

@@ -168,12 +168,10 @@ class OracleDataCollector(AgentConfig):
         # 变换矩阵：世界坐标 -> 机器人坐标
         transform_matrix = np.array([robot_right, robot_forward_norm]).T
 
-        # 根据距离调整最大速度
+        # 根据距离调整最大速度 (提高速度缩放，更激进地跟踪)
         if dist_to_human < 2.0:
-            speed_scale = 0.25
-        elif dist_to_human < 3.0:
             speed_scale = 0.5
-        elif dist_to_human < 4.0:
+        elif dist_to_human < 3.0:
             speed_scale = 0.75
         else:
             speed_scale = 1.0
@@ -190,14 +188,14 @@ class OracleDataCollector(AgentConfig):
         tangent_ratio = min(abs(self.max_tangent_speed / (tangent_speed + 1e-8)), 1.0)
         ratio = min(forward_ratio, tangent_ratio)
 
-        vx = forward_speed * ratio / self.max_forward_speed * self.max_forward_speed * 0.1
-        vy = -tangent_speed * ratio / self.max_tangent_speed * self.max_tangent_speed * 0.1
+        vx = forward_speed * ratio / self.max_forward_speed * self.max_forward_speed * 0.3
+        vy = -tangent_speed * ratio / self.max_tangent_speed * self.max_tangent_speed * 0.3
 
         # 计算转向速度
         is_left = np.cross(robot_forward, rel_targ) > 0
         angle = self._get_angle(rel_targ, robot_forward)
         turn_ratio = angle * 10 / self.max_yaw_speed
-        wz = np.clip(turn_ratio, 0, 1) * self.max_yaw_speed * 0.1
+        wz = np.clip(turn_ratio, 0, 1) * self.max_yaw_speed * 0.3
         if is_left:
             wz = -wz
 
