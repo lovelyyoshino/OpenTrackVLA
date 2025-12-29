@@ -64,7 +64,8 @@ class OracleDataCollector(AgentConfig):
         self._sim = sim
 
         # Oracle控制器参数
-        self.dist_thresh = 1.5  # 到目标的距离阈值
+        self.dist_thresh = 2.0  # 到目标的距离阈值 (提高以保持安全距离)
+        self.safety_dist = 0.8  # 安全距离阈值，低于此距离需要后退
         self.turn_thresh = 0.1  # 转向角度阈值
         self.max_forward_speed = 3.75
         self.max_tangent_speed = 1.25
@@ -110,6 +111,22 @@ class OracleDataCollector(AgentConfig):
 
         返回: [vx, vy, wz] 速度命令
         """
+        # 计算相对目标位置 (2D)
+        rel_human = (human_pos - robot_pos)[[0, 2]]
+        robot_forward_2d = robot_forward[[0, 2]]
+
+        # 到人类的距离
+        dist_to_human = np.linalg.norm(rel_human)
+
+        # 安全距离检查：如果太近，需要后退
+        if dist_to_human < self.safety_dist:
+            # 计算后退速度，距离越近后退越快
+            retreat_speed = (self.safety_dist - dist_to_human) / self.safety_dist * 0.5
+            retreat_speed = np.clip(retreat_speed, 0.1, 0.5)
+            # 同时转向面对人类
+            turn_vel = self._compute_turn_speed(rel_human, robot_forward_2d)
+            return [-retreat_speed, 0.0, turn_vel[2]]
+
         # 计算到人类的路径
         path_points = self._path_to_point(robot_pos, human_pos)
 
@@ -121,11 +138,6 @@ class OracleDataCollector(AgentConfig):
 
         # 计算相对目标位置 (2D)
         rel_targ = (next_waypoint - robot_pos)[[0, 2]]
-        rel_human = (human_pos - robot_pos)[[0, 2]]
-        robot_forward_2d = robot_forward[[0, 2]]
-
-        # 到最终目标的距离
-        dist_to_human = np.linalg.norm(rel_human)
 
         # 到下一个路径点的角度
         angle_to_target = self._get_angle(robot_forward_2d, rel_targ)
