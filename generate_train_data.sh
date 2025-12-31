@@ -37,10 +37,11 @@ set -e
 MODE="all"
 CONFIG="habitat-lab/habitat/config/benchmark/nav/track/track_train_stt.yaml"
 NUM_EPISODES=1000
-NUM_PARALLEL=4
-SEED=100
+NUM_PARALLEL=1
+SEED=42
 OUTPUT_DIR="data/sample"
-SIM_DATA_DIR="sim_data/generated"
+SIM_DATA_DIR="sim_data/train"
+INSTRUCTION="Follow the target person without collision."
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -73,6 +74,10 @@ while [[ $# -gt 0 ]]; do
             SIM_DATA_DIR="$2"
             shift 2
             ;;
+        --instruction)
+            INSTRUCTION="$2"
+            shift 2
+            ;;
         -h|--help)
             head -40 "$0" | tail -35
             exit 0
@@ -98,6 +103,7 @@ echo "Episodes/Job:   $EPISODES_PER_PROCESS"
 echo "Seed:           $SEED"
 echo "Sim Data Dir:   $SIM_DATA_DIR"
 echo "Output Dir:     $OUTPUT_DIR"
+echo "Instruction:    $INSTRUCTION"
 echo "=============================================="
 
 # 创建目录
@@ -113,42 +119,56 @@ collect_data() {
     echo "[Step 1/3] Collecting simulation data with Oracle policy..."
     echo "=============================================="
 
-    PIDS=()
+    if [ "$NUM_PARALLEL" -eq 1 ]; then
+        # 单进程模式
+        echo "Running single collector (seed=$SEED, episodes=$NUM_EPISODES)"
 
-    for ((i=0; i<NUM_PARALLEL; i++)); do
-        SPLIT_SEED=$((SEED + i))
-        LOG_FILE="logs/collect_split_${i}.log"
-
-        echo "Starting collector $i (seed=$SPLIT_SEED, episodes=$EPISODES_PER_PROCESS)"
-
-        CUDA_VISIBLE_DEVICES=$((i % $(nvidia-smi -L | wc -l))) \
         python collect_sim_data.py \
             --exp-config "$CONFIG" \
             --save-path "$SIM_DATA_DIR" \
-            --seed "$SPLIT_SEED" \
-            --split-id "$i" \
-            --split-num "$NUM_PARALLEL" \
-            --num-episodes "$EPISODES_PER_PROCESS" \
-            > "$LOG_FILE" 2>&1 &
+            --seed "$SEED" \
+            --num-episodes "$NUM_EPISODES" \
+            2>&1 | tee "logs/collect.log"
 
-        PIDS+=($!)
-    done
-
-    echo "Waiting for all collectors to finish..."
-    echo "Check logs in logs/collect_split_*.log"
-
-    # 等待所有进程完成
-    FAILED=0
-    for pid in "${PIDS[@]}"; do
-        if ! wait "$pid"; then
-            FAILED=$((FAILED + 1))
-        fi
-    done
-
-    if [ $FAILED -gt 0 ]; then
-        echo "WARNING: $FAILED collector(s) failed. Check logs for details."
+        echo "Collector finished!"
     else
-        echo "All collectors finished successfully!"
+        # 多进程模式 - 所有进程写入同一目录
+        PIDS=()
+
+        for ((i=0; i<NUM_PARALLEL; i++)); do
+            LOG_FILE="logs/collect_split_${i}.log"
+
+            echo "Starting collector $i (seed=$SEED, split=$i/$NUM_PARALLEL, episodes=$EPISODES_PER_PROCESS)"
+
+            CUDA_VISIBLE_DEVICES=$((i % $(nvidia-smi -L | wc -l))) \
+            python collect_sim_data.py \
+                --exp-config "$CONFIG" \
+                --save-path "$SIM_DATA_DIR" \
+                --seed "$SEED" \
+                --split-id "$i" \
+                --split-num "$NUM_PARALLEL" \
+                --num-episodes "$EPISODES_PER_PROCESS" \
+                > "$LOG_FILE" 2>&1 &
+
+            PIDS+=($!)
+        done
+
+        echo "Waiting for all collectors to finish..."
+        echo "Check logs in logs/collect_split_*.log"
+
+        # 等待所有进程完成
+        FAILED=0
+        for pid in "${PIDS[@]}"; do
+            if ! wait "$pid"; then
+                FAILED=$((FAILED + 1))
+            fi
+        done
+
+        if [ $FAILED -gt 0 ]; then
+            echo "WARNING: $FAILED collector(s) failed. Check logs for details."
+        else
+            echo "All collectors finished successfully!"
+        fi
     fi
 
     # 统计采集结果
@@ -172,7 +192,7 @@ process_data() {
         --horizon 8 \
         --dt 0.1 \
         --only_success \
-        --out_file "$OUTPUT_DIR/dataset.json"
+        --instruction "$INSTRUCTION"
 
     # 统计处理结果
     TOTAL_JSONL=$(find "$OUTPUT_DIR/jsonl" -name "*.jsonl" 2>/dev/null | wc -l)
@@ -232,14 +252,18 @@ echo "Output structure:"
 echo "  $OUTPUT_DIR/"
 echo "    ├── frames/          # Extracted video frames"
 echo "    ├── jsonl/           # Training samples (JSONL)"
-echo "    ├── vision_cache/    # Pre-computed vision features"
-echo "    └── dataset.json     # Aggregated dataset"
+echo "    └── vision_cache/    # Pre-computed vision features"
 echo ""
 echo "To start training:"
 echo "  python train.py \\"
 echo "      --train_json $OUTPUT_DIR/jsonl \\"
 echo "      --cache_root $OUTPUT_DIR/vision_cache \\"
-echo "      --out_dir ckpt_generated \\"
-echo "      --epochs 10 \\"
-echo "      --batch_size 8"
+echo "      --out_dir ckpt_sample \\"
+echo "      --epochs 2 \\"
+echo "      --batch_size 8 \\"
+echo "      --n_waypoints 8 \\"
+echo "      --history 31 \\"
+echo "      --lr 2e-5 \\"
+echo "      --mixed_precision \\"
+echo "      --save_trajectories"
 echo ""
