@@ -1,0 +1,3 @@
+[submodule "TrackVLA-ROS"]
+	path = TrackVLA-ROS
+	url = git@github.com:lovelyyoshino/TrackVLA-ROS.git
