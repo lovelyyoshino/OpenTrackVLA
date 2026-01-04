@@ -63,13 +63,18 @@ class OracleDataCollector(AgentConfig):
         self.rgb_list = []
         self._sim = sim
 
-        # Oracle控制器参数
-        self.dist_thresh = 2.0  # 到目标的距离阈值 (提高以保持安全距离)
-        self.safety_dist = 0.8  # 安全距离阈值，低于此距离需要后退
-        self.turn_thresh = 0.1  # 转向角度阈值
+        # Oracle控制器参数 (优化后)
+        self.dist_thresh = 1.5  # 到目标的距离阈值 (降低以更积极追踪)
+        self.safety_dist = 1.2  # 安全距离阈值 (提高以避免碰撞)
+        self.turn_thresh = 0.15  # 转向角度阈值 (稍微放宽)
         self.max_forward_speed = 3.75
         self.max_tangent_speed = 1.25
         self.max_yaw_speed = 3.75
+
+        # 追踪行为参数
+        self.ideal_follow_dist = 1.8  # 理想跟踪距离
+        self.min_follow_dist = 1.2    # 最小跟踪距离(低于此后退)
+        self.max_follow_dist = 3.0    # 最大跟踪距离(超过此加速)
 
         self.reset()
 
@@ -119,10 +124,10 @@ class OracleDataCollector(AgentConfig):
         dist_to_human = np.linalg.norm(rel_human)
 
         # 安全距离检查：如果太近，需要后退
-        if dist_to_human < self.safety_dist:
+        if dist_to_human < self.min_follow_dist:
             # 计算后退速度，距离越近后退越快
-            retreat_speed = (self.safety_dist - dist_to_human) / self.safety_dist * 0.5
-            retreat_speed = np.clip(retreat_speed, 0.1, 0.5)
+            retreat_factor = (self.min_follow_dist - dist_to_human) / self.min_follow_dist
+            retreat_speed = np.clip(retreat_factor * 0.8, 0.2, 0.8)  # 更积极后退
             # 同时转向面对人类
             turn_vel = self._compute_turn_speed(rel_human, robot_forward_2d)
             return [-retreat_speed, 0.0, turn_vel[2]]
@@ -143,15 +148,19 @@ class OracleDataCollector(AgentConfig):
         angle_to_target = self._get_angle(robot_forward_2d, rel_targ)
         angle_to_human = self._get_angle(robot_forward_2d, rel_human)
 
-        # 判断是否到达目标
-        at_goal = (dist_to_human < self.dist_thresh and angle_to_human < self.turn_thresh)
+        # 判断是否在理想跟踪范围内
+        in_ideal_range = (dist_to_human >= self.min_follow_dist and
+                          dist_to_human <= self.ideal_follow_dist and
+                          angle_to_human < self.turn_thresh)
 
-        if at_goal:
-            return [0.0, 0.0, 0.0]
+        if in_ideal_range:
+            # 在理想范围内，只需微调朝向
+            vel = self._compute_turn_speed(rel_human, robot_forward_2d)
+            return [vel[0] * 0.3, vel[1], vel[2] * 0.5]  # 减小转向幅度
 
         # 计算速度命令
-        if dist_to_human < self.dist_thresh:
-            # 已经很近，只需要转向面对人类
+        if dist_to_human < self.dist_thresh and angle_to_human > self.turn_thresh:
+            # 距离够近但朝向不对，转向面对人类
             vel = self._compute_turn_speed(rel_human, robot_forward_2d)
         else:
             # 需要移动，计算组合速度
@@ -180,12 +189,15 @@ class OracleDataCollector(AgentConfig):
         # 变换矩阵：世界坐标 -> 机器人坐标
         transform_matrix = np.array([robot_right, robot_forward_norm]).T
 
-        # 根据距离调整最大速度 (提高速度缩放，更激进地跟踪)
-        if dist_to_human < 2.0:
+        # 根据距离调整速度增益 - 使用新的跟踪距离参数
+        if dist_to_human < self.ideal_follow_dist:
+            # 接近理想距离，减速
             speed_scale = 0.5
-        elif dist_to_human < 3.0:
+        elif dist_to_human < self.max_follow_dist:
+            # 在理想和最大距离之间，正常速度
             speed_scale = 0.75
         else:
+            # 超过最大跟踪距离，全速追踪
             speed_scale = 1.0
 
         # 在机器人坐标系中的相对位置
@@ -200,14 +212,16 @@ class OracleDataCollector(AgentConfig):
         tangent_ratio = min(abs(self.max_tangent_speed / (tangent_speed + 1e-8)), 1.0)
         ratio = min(forward_ratio, tangent_ratio)
 
-        vx = forward_speed * ratio / self.max_forward_speed * self.max_forward_speed * 0.3
-        vy = -tangent_speed * ratio / self.max_tangent_speed * self.max_tangent_speed * 0.3
+        # 提高速度增益 (从0.3提高到0.5-0.7)
+        speed_gain = 0.5 if dist_to_human < self.ideal_follow_dist else 0.7
+        vx = forward_speed * ratio / self.max_forward_speed * self.max_forward_speed * speed_gain
+        vy = -tangent_speed * ratio / self.max_tangent_speed * self.max_tangent_speed * speed_gain * 0.8
 
         # 计算转向速度
         is_left = np.cross(robot_forward, rel_targ) > 0
         angle = self._get_angle(rel_targ, robot_forward)
         turn_ratio = angle * 10 / self.max_yaw_speed
-        wz = np.clip(turn_ratio, 0, 1) * self.max_yaw_speed * 0.3
+        wz = np.clip(turn_ratio, 0, 1) * self.max_yaw_speed * speed_gain
         if is_left:
             wz = -wz
 

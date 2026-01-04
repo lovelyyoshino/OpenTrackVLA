@@ -205,18 +205,66 @@ def collect_episode_pairs(input_root: Path) -> List[EpisodePaths]:
     return episodes
 
 
-def should_keep_episode(run_dir: Path, stem: str, only_success: bool) -> bool:
-    if not only_success:
-        return True
+def should_keep_episode(run_dir: Path, stem: str, only_success: bool,
+                        min_following_rate: float = 0.0,
+                        exclude_collision: bool = False) -> bool:
+    """
+    判断是否保留该 episode
+
+    Args:
+        run_dir: episode 所在目录
+        stem: episode 文件名前缀
+        only_success: 是否只保留成功的 episode
+        min_following_rate: 最小跟踪率阈值 (0-1)
+        exclude_collision: 是否排除碰撞的 episode
+
+    Returns:
+        是否保留该 episode
+    """
     status_path = run_dir / f"{stem}.json"
     status = load_episode_status(status_path)
+
+    # 如果没有状态文件，根据 only_success 决定
     if not status:
+        return not only_success
+
+    # 检查碰撞
+    if exclude_collision:
+        collision = status.get("collision", 0)
+        if isinstance(collision, (int, float)) and collision > 0:
+            return False
+        status_str = str(status.get("status", "")).lower()
+        if "collision" in status_str:
+            return False
+
+    # 检查跟踪率
+    following_rate = status.get("following_rate", 0)
+    if isinstance(following_rate, (int, float)) and following_rate < min_following_rate:
         return False
-    # keep if success flag indicates success
+
+    # 如果不需要只保留成功的，到这里就通过了
+    if not only_success:
+        return True
+
+    # 检查成功条件（更严格）
     success_val = status.get("success")
     finish = status.get("finish")
     status_str = str(status.get("status", "")).lower()
-    return bool(finish) or (isinstance(success_val, (int, float)) and success_val > 0) or ("success" in status_str)
+
+    # 成功条件：
+    # 1. success > 0
+    # 2. 或者 status 包含 "success"
+    # 3. 或者 finish=True 且 following_rate >= 0.5
+    is_success = (isinstance(success_val, (int, float)) and success_val > 0) or ("success" in status_str)
+
+    if is_success:
+        return True
+
+    # 对于 finish=True 但不是明确 success 的，需要检查 following_rate
+    if finish:
+        return isinstance(following_rate, (int, float)) and following_rate >= 0.5
+
+    return False
 
 
 def main():
@@ -225,6 +273,17 @@ def main():
     parser.add_argument("--output_root", type=str, required=True, help="Output root for training data (e.g., data/track)")
     parser.add_argument("--max_frames", type=int, default=32, help="[Deprecated] Ignored. All frames will be used.")
     parser.add_argument("--only_success", action="store_true", help="Keep only successful episodes if status json exists")
+    parser.add_argument(
+        "--min_following_rate",
+        type=float,
+        default=0.0,
+        help="Minimum following rate threshold (0-1). Episodes below this are excluded. Recommended: 0.3-0.5",
+    )
+    parser.add_argument(
+        "--exclude_collision",
+        action="store_true",
+        help="Exclude episodes with collision. Recommended for high-quality training data.",
+    )
     parser.add_argument(
         "--instruction",
         type=str,
@@ -271,7 +330,9 @@ def main():
 
     for ep in episodes:
         kept += 1
-        if not should_keep_episode(ep.run_dir, ep.stem, args.only_success):
+        if not should_keep_episode(ep.run_dir, ep.stem, args.only_success,
+                                   min_following_rate=args.min_following_rate,
+                                   exclude_collision=args.exclude_collision):
             continue
 
         if ep.mp4 is None or not ep.mp4.exists():

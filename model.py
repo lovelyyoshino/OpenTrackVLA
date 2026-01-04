@@ -192,9 +192,24 @@ class OpenTrackVLA(nn.Module):
     def __init__(self, cfg: ModelConfig, vision_feat_dim: int):
         super().__init__()
         self.cfg = cfg
-        self.llm = AutoModel.from_pretrained(cfg.llm_name, torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None)
+        # Load LLM - try ModelScope first if available, fallback to HuggingFace
+        try:
+            from modelscope import AutoModel as MSAutoModel
+            from modelscope import AutoTokenizer as MSAutoTokenizer
+            print(f"[LLM] Loading from ModelScope: {cfg.llm_name}")
+            self.llm = MSAutoModel.from_pretrained(
+                cfg.llm_name,
+                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None
+            )
+            self.tokenizer = MSAutoTokenizer.from_pretrained(cfg.llm_name)
+        except Exception as e:
+            print(f"[LLM] ModelScope failed ({e}), using HuggingFace")
+            self.llm = AutoModel.from_pretrained(
+                cfg.llm_name,
+                torch_dtype=torch.bfloat16 if torch.cuda.is_available() else None
+            )
+            self.tokenizer = AutoTokenizer.from_pretrained(cfg.llm_name)
         self.llm.requires_grad_(not cfg.freeze_llm)
-        self.tokenizer = AutoTokenizer.from_pretrained(cfg.llm_name)
         self.D = self.llm.config.hidden_size
         self.proj = CrossModalityProjector(vision_feat_dim, self.D)
         self.proj.requires_grad_(True)

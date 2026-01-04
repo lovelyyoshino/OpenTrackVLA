@@ -5,23 +5,28 @@
 #
 # 这个脚本实现了从HM3D/MP3D场景批量生成训练数据的完整闭环：
 #   1. 使用Oracle策略在Habitat仿真器中采集数据
-#   2. 将仿真数据转换为训练格式
+#   2. 将仿真数据转换为训练格式 (支持严格筛选)
 #   3. 预计算视觉特征缓存
 #
 # 用法:
 #   bash generate_train_data.sh [选项]
 #
 # 选项:
-#   --mode          运行模式: collect|process|cache|all (默认: all)
-#   --config        Habitat配置文件 (默认: track_train_stt.yaml)
-#   --num-episodes  采集的episode数量 (默认: 1000)
-#   --num-parallel  并行进程数 (默认: 4)
-#   --seed          随机种子 (默认: 100)
-#   --output        输出目录 (默认: data/generated)
+#   --mode              运行模式: collect|process|cache|all (默认: all)
+#   --config            Habitat配置文件 (默认: track_train_stt.yaml)
+#   --num-episodes      采集的episode数量 (默认: 1000)
+#   --num-parallel      并行进程数 (默认: 4)
+#   --seed              随机种子 (默认: 100)
+#   --output            输出目录 (默认: data/generated)
+#   --min-following-rate 最小跟踪率阈值 (默认: 0.4, 范围 0-1)
+#   --no-exclude-collision 不排除碰撞episode (默认: 排除碰撞)
 #
 # 示例:
-#   # 完整流程
+#   # 完整流程 (使用严格筛选)
 #   bash generate_train_data.sh --num-episodes 5000 --num-parallel 8
+#
+#   # 使用更严格的筛选
+#   bash generate_train_data.sh --min-following-rate 0.5
 #
 #   # 仅采集数据
 #   bash generate_train_data.sh --mode collect --num-episodes 1000
@@ -42,6 +47,9 @@ SEED=42
 OUTPUT_DIR="data/sample"
 SIM_DATA_DIR="sim_data/train"
 INSTRUCTION="Follow the target person without collision."
+# 数据筛选参数 (新增)
+MIN_FOLLOWING_RATE=0.4
+EXCLUDE_COLLISION=true
 
 # 解析命令行参数
 while [[ $# -gt 0 ]]; do
@@ -78,6 +86,14 @@ while [[ $# -gt 0 ]]; do
             INSTRUCTION="$2"
             shift 2
             ;;
+        --min-following-rate)
+            MIN_FOLLOWING_RATE="$2"
+            shift 2
+            ;;
+        --no-exclude-collision)
+            EXCLUDE_COLLISION=false
+            shift
+            ;;
         -h|--help)
             head -40 "$0" | tail -35
             exit 0
@@ -104,6 +120,8 @@ echo "Seed:           $SEED"
 echo "Sim Data Dir:   $SIM_DATA_DIR"
 echo "Output Dir:     $OUTPUT_DIR"
 echo "Instruction:    $INSTRUCTION"
+echo "Min Follow Rate: $MIN_FOLLOWING_RATE"
+echo "Exclude Collision: $EXCLUDE_COLLISION"
 echo "=============================================="
 
 # 创建目录
@@ -185,13 +203,21 @@ process_data() {
     echo "[Step 2/3] Processing simulation data to training format..."
     echo "=============================================="
 
+    # 构建筛选参数
+    FILTER_ARGS="--only_success --min_following_rate $MIN_FOLLOWING_RATE"
+    if [ "$EXCLUDE_COLLISION" = true ]; then
+        FILTER_ARGS="$FILTER_ARGS --exclude_collision"
+    fi
+
+    echo "Filter args: $FILTER_ARGS"
+
     python make_tracking_data.py \
         --input_root "$SIM_DATA_DIR" \
         --output_root "$OUTPUT_DIR" \
         --history 31 \
         --horizon 8 \
         --dt 0.1 \
-        --only_success \
+        $FILTER_ARGS \
         --instruction "$INSTRUCTION"
 
     # 统计处理结果
