@@ -23,3 +23,5 @@ ckpt*/
 habitat-sim/
 pretrained_model/
 sim_data/
+
+open_trackvla_hf

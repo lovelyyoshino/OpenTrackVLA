@@ -41,8 +41,3 @@ class OpenTrackVLAConfig(PretrainedConfig):
         self.vision_feat_dim = vision_feat_dim
 
 
-
-
-
-
-
