@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.8)
+project(unitree_go)
+
+find_package(ament_cmake REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
+
+rosidl_generate_interfaces(${PROJECT_NAME}
+  "msg/Go2FrontVideoData.msg"
+  "msg/Request.msg"
+  "msg/RequestHeader.msg"
+  "msg/RequestIdentity.msg"
+  "msg/RequestLease.msg"
+  "msg/RequestPolicy.msg"
+)
+
+ament_export_dependencies(rosidl_default_runtime)
+ament_package()
